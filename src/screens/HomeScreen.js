@@ -13,10 +13,13 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 import { healthAPI } from '../services/api';
 import healthConnectService from '../services/healthConnect';
 
 const USER_ID_KEY = '@health_sync_user_id';
+const LOG_FILE_PATH = FileSystem.documentDirectory + 'health-sync-logs.txt';
 
 export default function HomeScreen({ navigation }) {
   const [userId, setUserId] = useState('');
@@ -57,11 +60,25 @@ export default function HomeScreen({ navigation }) {
     }
   };
 
-  const addLog = (message, type = 'info') => {
-    const timestamp = new Date().toLocaleTimeString('ko-KR');
+  const addLog = async (message, type = 'info') => {
+    const now = new Date();
+    const timestamp = now.toLocaleTimeString('ko-KR');
+    const fullTimestamp = now.toISOString();
     const logEntry = { message, type, timestamp };
+
     console.log(`[${type.toUpperCase()}] ${message}`);
     setLogs(prev => [logEntry, ...prev].slice(0, 50)); // 최대 50개 로그 유지
+
+    // 파일에 로그 저장
+    try {
+      const logLine = `[${fullTimestamp}] [${type.toUpperCase()}] ${message}\n`;
+      await FileSystem.writeAsStringAsync(LOG_FILE_PATH, logLine, {
+        encoding: FileSystem.EncodingType.UTF8,
+        append: true,
+      });
+    } catch (error) {
+      console.error('Failed to write log to file:', error);
+    }
   };
 
   const checkServerStatus = async () => {
@@ -87,6 +104,45 @@ export default function HomeScreen({ navigation }) {
     addLog('서버 깨우기 시작...', 'info');
     setServerStatus({ status: 'checking', message: '서버 깨우는 중...' });
     await checkServerStatus();
+  };
+
+  const exportLogs = async () => {
+    try {
+      const fileInfo = await FileSystem.getInfoAsync(LOG_FILE_PATH);
+      if (!fileInfo.exists) {
+        Alert.alert('알림', '저장된 로그가 없습니다');
+        return;
+      }
+
+      const isAvailable = await Sharing.isAvailableAsync();
+      if (!isAvailable) {
+        Alert.alert('오류', '이 기기에서는 파일 공유가 지원되지 않습니다');
+        return;
+      }
+
+      await Sharing.shareAsync(LOG_FILE_PATH, {
+        mimeType: 'text/plain',
+        dialogTitle: '로그 파일 공유',
+        UTI: 'public.plain-text',
+      });
+
+      addLog('로그 파일 내보내기 완료', 'success');
+    } catch (error) {
+      const errorMsg = '로그 내보내기 실패: ' + (error.message || '알 수 없는 오류');
+      addLog(errorMsg, 'error');
+      Alert.alert('오류', '로그 파일을 내보내는데 실패했습니다');
+    }
+  };
+
+  const clearLogs = async () => {
+    try {
+      await FileSystem.deleteAsync(LOG_FILE_PATH, { idempotent: true });
+      setLogs([]);
+      addLog('로그 초기화 완료', 'success');
+      Alert.alert('완료', '로그가 초기화되었습니다');
+    } catch (error) {
+      Alert.alert('오류', '로그 초기화에 실패했습니다');
+    }
   };
 
   const initHealthConnect = async () => {
@@ -445,7 +501,17 @@ export default function HomeScreen({ navigation }) {
           {/* 로그 표시 */}
           {logs.length > 0 && (
             <View style={styles.logSection}>
-              <Text style={styles.logTitle}>디버그 로그</Text>
+              <View style={styles.logHeader}>
+                <Text style={styles.logTitle}>디버그 로그</Text>
+                <View style={styles.logActions}>
+                  <TouchableOpacity style={styles.logActionButton} onPress={exportLogs}>
+                    <Text style={styles.logActionText}>📤 내보내기</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.logActionButton} onPress={clearLogs}>
+                    <Text style={styles.logActionText}>🗑️ 초기화</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
               <ScrollView style={styles.logContainer} nestedScrollEnabled={true}>
                 {logs.map((log, index) => (
                   <View key={index} style={styles.logEntry}>
@@ -644,11 +710,31 @@ const styles = StyleSheet.create({
     padding: 15,
     maxHeight: 300,
   },
+  logHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
   logTitle: {
     fontSize: 16,
     fontWeight: 'bold',
     color: '#333',
-    marginBottom: 10,
+  },
+  logActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  logActionButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    backgroundColor: '#007AFF',
+    borderRadius: 6,
+  },
+  logActionText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
   },
   logContainer: {
     maxHeight: 250,
