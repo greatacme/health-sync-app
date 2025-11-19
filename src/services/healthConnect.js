@@ -31,19 +31,28 @@ export const checkHealthConnectStatus = async () => {
 // 권한 요청
 export const requestHealthConnectPermissions = async () => {
   try {
+    console.log('[HC Service] 권한 요청 시작 - requestPermission 호출 직전');
+
     // 읽기 권한 요청
-    const grantedPermissions = await requestPermission([
+    const permissions = [
       { accessType: 'read', recordType: 'Steps' },
       { accessType: 'read', recordType: 'HeartRate' },
       { accessType: 'read', recordType: 'TotalCaloriesBurned' },
       { accessType: 'read', recordType: 'SleepSession' },
       { accessType: 'read', recordType: 'Weight' },
-    ]);
+    ];
 
-    console.log('Granted permissions:', grantedPermissions);
+    console.log('[HC Service] 요청할 권한:', JSON.stringify(permissions));
+
+    const grantedPermissions = await requestPermission(permissions);
+
+    console.log('[HC Service] requestPermission 호출 완료');
+    console.log('[HC Service] 승인된 권한:', JSON.stringify(grantedPermissions));
+
     return grantedPermissions;
   } catch (error) {
-    console.error('Permission request error:', error);
+    console.error('[HC Service] 권한 요청 오류:', error);
+    console.error('[HC Service] 오류 상세:', error.message, error.stack);
     throw error;
   }
 };
