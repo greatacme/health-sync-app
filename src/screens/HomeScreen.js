@@ -30,6 +30,7 @@ export default function HomeScreen({ navigation }) {
   const [syncing, setSyncing] = useState(false);
   const [healthConnectAvailable, setHealthConnectAvailable] = useState(false);
   const [healthConnectInitialized, setHealthConnectInitialized] = useState(false);
+  const [logs, setLogs] = useState([]);
 
   useEffect(() => {
     loadUserId();
@@ -56,39 +57,62 @@ export default function HomeScreen({ navigation }) {
     }
   };
 
+  const addLog = (message, type = 'info') => {
+    const timestamp = new Date().toLocaleTimeString('ko-KR');
+    const logEntry = { message, type, timestamp };
+    console.log(`[${type.toUpperCase()}] ${message}`);
+    setLogs(prev => [logEntry, ...prev].slice(0, 50)); // 최대 50개 로그 유지
+  };
+
   const checkServerStatus = async () => {
     try {
+      addLog('서버 상태 확인 시작...', 'info');
       const status = await healthAPI.checkServerHealth();
       setServerStatus(status);
+      addLog(`서버 상태: ${status.message}`, status.status === 'online' ? 'success' : 'warning');
 
       // 서버가 시작 중이면 재시도
       if (status.status === 'starting') {
+        addLog('서버 시작 중... 5초 후 재시도', 'warning');
         setTimeout(() => checkServerStatus(), 5000);
       }
     } catch (error) {
+      const errorMsg = '서버 상태 확인 실패: ' + (error.message || '알 수 없는 오류');
+      addLog(errorMsg, 'error');
       setServerStatus({ status: 'error', message: '서버 상태 확인 실패' });
     }
   };
 
+  const wakeUpServer = async () => {
+    addLog('서버 깨우기 시작...', 'info');
+    setServerStatus({ status: 'checking', message: '서버 깨우는 중...' });
+    await checkServerStatus();
+  };
+
   const initHealthConnect = async () => {
     try {
+      addLog('Health Connect 초기화 시작...', 'info');
+
       // Health Connect 사용 가능 여부 확인
       const isAvailable = await healthConnectService.checkHealthConnectStatus();
       setHealthConnectAvailable(isAvailable);
+      addLog(`Health Connect 사용 가능: ${isAvailable}`, isAvailable ? 'success' : 'warning');
 
       if (isAvailable) {
         // Health Connect 초기화
         const isInitialized = await healthConnectService.initializeHealthConnect();
         setHealthConnectInitialized(isInitialized);
+        addLog(`Health Connect 초기화: ${isInitialized ? '성공' : '실패'}`, isInitialized ? 'success' : 'error');
 
         if (!isInitialized) {
-          console.warn('Health Connect initialization failed');
+          addLog('Health Connect 초기화 실패', 'error');
         }
       } else {
-        console.warn('Health Connect is not available on this device');
+        addLog('이 기기에서는 Health Connect를 사용할 수 없습니다', 'warning');
       }
     } catch (error) {
-      console.error('Health Connect init error:', error);
+      const errorMsg = 'Health Connect 초기화 오류: ' + (error.message || error.toString());
+      addLog(errorMsg, 'error');
       setHealthConnectAvailable(false);
       setHealthConnectInitialized(false);
     }
@@ -96,7 +120,10 @@ export default function HomeScreen({ navigation }) {
 
   const requestHealthConnectPermissions = async () => {
     try {
+      addLog('Health Connect 권한 요청 시작...', 'info');
+
       if (!healthConnectAvailable) {
+        addLog('Health Connect 사용 불가', 'error');
         Alert.alert(
           'Health Connect 사용 불가',
           '이 기기에서는 Health Connect를 사용할 수 없습니다. 서버에서 데이터를 가져오는 기능만 사용할 수 있습니다.'
@@ -104,9 +131,14 @@ export default function HomeScreen({ navigation }) {
         return false;
       }
 
+      addLog('Health Connect 권한 대화상자 표시 중...', 'info');
       const permissions = await healthConnectService.requestHealthConnectPermissions();
-      return permissions && permissions.length > 0;
+      const granted = permissions && permissions.length > 0;
+      addLog(`권한 요청 결과: ${granted ? '승인됨' : '거부됨'}`, granted ? 'success' : 'error');
+      return granted;
     } catch (error) {
+      const errorMsg = 'Health Connect 권한 요청 오류: ' + (error.message || error.toString());
+      addLog(errorMsg, 'error');
       console.error('Permission request error:', error);
       Alert.alert('오류', 'Health Connect 권한 요청에 실패했습니다');
       return false;
@@ -290,6 +322,17 @@ export default function HomeScreen({ navigation }) {
               Health Connect: {healthConnectAvailable ? '사용 가능' : '사용 불가'}
             </Text>
           </View>
+
+          {/* 서버 깨우기 버튼 */}
+          <TouchableOpacity
+            style={styles.wakeUpButton}
+            onPress={wakeUpServer}
+            disabled={serverStatus.status === 'checking'}
+          >
+            <Text style={styles.wakeUpButtonText}>
+              {serverStatus.status === 'checking' ? '확인 중...' : '🔄 서버 깨우기'}
+            </Text>
+          </TouchableOpacity>
         </View>
 
         <View style={styles.form}>
@@ -398,11 +441,39 @@ export default function HomeScreen({ navigation }) {
           >
             <Text style={styles.secondaryButtonText}>전체 기록 보기</Text>
           </TouchableOpacity>
+
+          {/* 로그 표시 */}
+          {logs.length > 0 && (
+            <View style={styles.logSection}>
+              <Text style={styles.logTitle}>디버그 로그</Text>
+              <ScrollView style={styles.logContainer} nestedScrollEnabled={true}>
+                {logs.map((log, index) => (
+                  <View key={index} style={styles.logEntry}>
+                    <Text style={[styles.logTime, { color: getLogColor(log.type) }]}>
+                      [{log.timestamp}]
+                    </Text>
+                    <Text style={[styles.logMessage, { color: getLogColor(log.type) }]}>
+                      {log.message}
+                    </Text>
+                  </View>
+                ))}
+              </ScrollView>
+            </View>
+          )}
         </View>
       </ScrollView>
     </SafeAreaView>
   );
 }
+
+const getLogColor = (type) => {
+  switch (type) {
+    case 'success': return '#34C759';
+    case 'error': return '#FF3B30';
+    case 'warning': return '#FF9500';
+    default: return '#666';
+  }
+};
 
 const styles = StyleSheet.create({
   container: {
@@ -553,5 +624,48 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666',
     paddingVertical: 2,
+  },
+  wakeUpButton: {
+    backgroundColor: '#007AFF',
+    borderRadius: 8,
+    padding: 10,
+    marginTop: 10,
+    alignItems: 'center',
+  },
+  wakeUpButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  logSection: {
+    marginTop: 20,
+    backgroundColor: '#f8f8f8',
+    borderRadius: 12,
+    padding: 15,
+    maxHeight: 300,
+  },
+  logTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 10,
+  },
+  logContainer: {
+    maxHeight: 250,
+  },
+  logEntry: {
+    marginBottom: 8,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
+  logTime: {
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  logMessage: {
+    fontSize: 13,
+    lineHeight: 18,
   },
 });
